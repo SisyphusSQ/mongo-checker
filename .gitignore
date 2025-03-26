@@ -1,0 +1,14 @@
+bin/*
+pkg/*
+
+tags
+coverage.out
+
+.idea
+
+.DS_Store
+
+*.log
+*.exe
+
+conf/test.toml
