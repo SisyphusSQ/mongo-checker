@@ -1,5 +1,4 @@
 bin/*
-pkg/*
 
 tags
 coverage.out

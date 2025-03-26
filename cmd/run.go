@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"mongo-checker/internal/task"
 	"os"
 	"os/signal"
 	"runtime"
@@ -91,11 +90,11 @@ var runCmd = &cobra.Command{
 		}()
 
 		// main logic
-		err = task.RunTask(cfg)
-		if err != nil {
-			l.Logger.Errorf("check task got err: %v", err.Error())
-			return err
-		}
+		//err = task.RunTask()
+		//if err != nil {
+		//	l.Logger.Errorf("check task got err: %v", err.Error())
+		//	return err
+		//}
 
 		// do memory profiling before exit
 		MemProfile()
