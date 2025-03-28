@@ -14,16 +14,16 @@ all: clean build deploy run
 release: build linux test darwin
 
 build:
-	GOARCH=amd64 GOOS=linux go build -ldflags="${BUILD_FLAGS}" -o ${BINARY_NAME} main.go
+	GOARCH=amd64 GOOS=linux go build -ldflags="${BUILD_FLAGS}" -o bin/${BINARY_NAME} main.go
 
 linux:
-	@mv ${BINARY_NAME} ${BINARY_NAME}.linux.amd64
+	@mv bin/${BINARY_NAME} bin/${BINARY_NAME}.linux.amd64
 
 test:
-	go build -ldflags="${BUILD_FLAGS}" -o ${BINARY_NAME} main.go
+	go build -ldflags="${BUILD_FLAGS}" -o bin/${BINARY_NAME} main.go
 
 darwin:
-	@mv ${BINARY_NAME} ${BINARY_NAME}.darwin.arm64
+	@mv bin/${BINARY_NAME} bin/${BINARY_NAME}.darwin.arm64
 
 deploy:
 	@mv -f ${BINARY_NAME} /usr/local/bin/

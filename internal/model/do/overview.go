@@ -5,15 +5,14 @@ import (
 )
 
 type Overview struct {
-	Id          int       `gorm:"column:id;primaryKey;autoIncrement"`
-	Database    string    `gorm:"column:database"`
-	Coll        string    `gorm:"column:collection"`
-	TargetExist int       `gorm:"column:target_exist"`
-	IndexNum    string    `gorm:"column:index_num"`
-	NotFound    int       `gorm:"column:not_found"`
-	Wrong       int       `gorm:"column:wrong"`
-	CheckTotal  int64     `gorm:"column:check_total"`
-	CreatedAt   time.Time `gorm:"column:created_at"`
+	Id         int       `gorm:"column:id;primaryKey;autoIncrement"`
+	Database   string    `gorm:"column:database"`
+	Coll       string    `gorm:"column:collection"`
+	NotFound   int64     `gorm:"column:not_found"`
+	Wrong      int64     `gorm:"column:wrong"`
+	Total      int64     `gorm:"column:total"`
+	CheckTotal int64     `gorm:"column:check_total"`
+	CreatedAt  time.Time `gorm:"column:created_at"`
 }
 
 func (Overview) TableName() string {

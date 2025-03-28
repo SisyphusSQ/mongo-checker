@@ -1,0 +1,32 @@
+# ------- mongodb config -------
+source = "mongodb://root:root@primaryA:27017,SecondnaryB:27091,SecondnaryC:27091"
+destination = "mongodb://root:root@primaryA:27017,SecondnaryB:27091,SecondnaryC:27091"
+
+# connect mode:
+# primary: fetch data from primary.
+# secondaryPreferred: fetch data from secondary if has, otherwise primary.(default)
+# standalone: fetch data from given 1 node, no matter primary, secondary or hidden.
+connect_mode = "primary"
+
+# which database(s) should be include or exclude, include_dbs and exclude_dbs are mutually exclusive.
+# ex: db1 or db1,db2,...
+exclude_dbs = ""
+include_dbs = ""
+
+# which collection(s) should be include or exclude, include_coll and exclude_coll are mutually exclusive.
+# ex: coll1 or coll1,coll2,...
+exclude_colls = ""
+include_colls = ""
+
+# transform from source db to dest db.
+# at most one of these two parameters can be given.
+# transform: fromDbName1:toDbName1;fromDbName2:toDbName2
+database_transform = ""
+
+# ------- check config -------
+parallel = 8
+limit_qps = 5000
+
+# ------- other config -------
+debug = false
+log_path = "logs/"

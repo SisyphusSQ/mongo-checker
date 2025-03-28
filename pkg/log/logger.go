@@ -1,6 +1,10 @@
 package log
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -15,6 +19,17 @@ func New(c *config.Config) {
 	loglevel := zapcore.InfoLevel
 	if c.Debug {
 		loglevel = zapcore.DebugLevel
+	}
+
+	logDir, err := filepath.Abs(c.LogPath)
+	if err != nil {
+		panic(err)
+	}
+
+	if _, err = os.Stat(logDir); err != nil && os.IsNotExist(err) {
+		if err = os.MkdirAll(logDir, os.ModeDir|os.ModePerm); err != nil {
+			panic(fmt.Errorf("create log.dir[%v] failed[%v]", logDir, err))
+		}
 	}
 
 	lumberJackLogger := &lumberjack.Logger{

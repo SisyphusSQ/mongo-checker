@@ -2,15 +2,19 @@ package cmd
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
 	"runtime/pprof"
 	"syscall"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 
 	"mongo-checker/internal/config"
+	"mongo-checker/internal/task"
 	l "mongo-checker/pkg/log"
 	"mongo-checker/vars"
 )
@@ -32,10 +36,9 @@ var (
 	includeColls string
 	dbTrans      string
 
-	checkIndexes bool
-	chunkSize    int
-	parallel     int
-	logPath      string
+	limitQPS int
+	parallel int
+	logPath  string
 )
 
 var runCmd = &cobra.Command{
@@ -61,14 +64,28 @@ var runCmd = &cobra.Command{
 				IncludeDBs:   includeDBs,
 				ExcludeColls: excludeColls,
 				IncludeColls: includeColls,
-				CheckIndexes: checkIndexes,
-				ChunkSize:    chunkSize,
+				LimitQPS:     limitQPS,
 				Parallel:     parallel,
 				LogPath:      logPath,
 			}
 			cfg.PreCheck()
 		}
 		l.New(cfg)
+
+		// ------------ http server ------------
+		if cfg.Debug {
+			go func() {
+				http.Handle("/metrics", promhttp.Handler())
+				_ = http.ListenAndServe(fmt.Sprintf(":%d", 7799), nil)
+			}()
+		}
+
+		// main logic
+		task, err := task.New(cfg)
+		if err != nil {
+			l.Logger.Errorf("New global check task err: %v", err)
+			return err
+		}
 
 		f := StartCpuProfile()
 		defer StopCpuProfile(f)
@@ -83,18 +100,20 @@ var runCmd = &cobra.Command{
 				case syscall.SIGINT, syscall.SIGTERM:
 					l.Logger.Debug("Terminating process, will finish cpu pprof before exit(if specified)...")
 					StopCpuProfile(f)
+
+					task.Stop()
+					time.Sleep(3 * time.Second)
 					os.Exit(1)
 				default:
 				}
 			}
 		}()
 
-		// main logic
-		//err = task.RunTask()
-		//if err != nil {
-		//	l.Logger.Errorf("check task got err: %v", err.Error())
-		//	return err
-		//}
+		err = task.Start()
+		if err != nil {
+			return err
+		}
+		l.Logger.Info("All checks have been finished, Bye...")
 
 		// do memory profiling before exit
 		MemProfile()
@@ -103,16 +122,15 @@ var runCmd = &cobra.Command{
 }
 
 func initRun() {
-	runCmd.Flags().StringVarP(&configPath, "config", "c", "", "config file path")
+	runCmd.Flags().StringVarP(&configPath, "config", "c", "/Users/suqing/Coding/golang/self/mongo-checker/conf/test.toml", "config file path")
 	runCmd.Flags().StringVar(&logPath, "log-path", "./logs", "log and sqlite db file path")
 	runCmd.Flags().StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to `file`")
 	runCmd.Flags().StringVar(&memprofile, "memprofile", "", "write memory profile to `file`")
 
-	runCmd.Flags().IntVar(&chunkSize, "chunk-size", 1000, "Number of rows to act on in chunks.\nZero(0) means all rows updated in one operation.\nOne(1) means update/delete one row everytime.\nThe lower the number, the shorter any locks are held, but the more operations required and the more total running time.")
-	runCmd.Flags().IntVar(&parallel, "parallel", 1000, "Number of collections will be checked in parallel")
+	runCmd.Flags().IntVar(&limitQPS, "limit-qps", 5000, "Number of rows to act on in chunks.\nZero(0) means all rows updated in one operation.\nOne(1) means update/delete one row everytime.\nThe lower the number, the shorter any locks are held, but the more operations required and the more total running time.")
+	runCmd.Flags().IntVar(&parallel, "parallel", 8, "Number of collections will be checked in parallel")
 
 	runCmd.Flags().BoolVar(&debug, "debug", false, "If debug_mode is true, print debug logs")
-	runCmd.Flags().BoolVar(&checkIndexes, "check-index", false, "If check indexes is true, checker will check indexes num which is equaled between source and destination")
 
 	runCmd.Flags().StringVarP(&source, "source", "s", "", "E.g., mongodb://username:password@primaryA,secondaryB,secondaryC")
 	runCmd.Flags().StringVarP(&destination, "destination", "d", "", "E.g., mongodb://username:password@primaryA,secondaryB,secondaryC")

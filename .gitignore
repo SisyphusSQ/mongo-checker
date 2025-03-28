@@ -9,5 +9,8 @@ coverage.out
 
 *.log
 *.exe
+*.profile
 
 conf/test.toml
+
+logs/*

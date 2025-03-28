@@ -3,11 +3,11 @@ package gormv2
 import (
 	"time"
 
-	"mongo-checker/pkg/log"
-
-	"gorm.io/driver/sqlite"
+	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+
+	"mongo-checker/pkg/log"
 )
 
 type Engine struct {
@@ -18,7 +18,7 @@ func (db *Engine) Connect() *gorm.DB {
 	return db.gorm
 }
 
-func New(path string) (*Engine, error) {
+func NewSqlite(path string) (*Engine, error) {
 	db, err := gorm.Open(sqlite.Open(path+"/result.db"), &gorm.Config{})
 	if err != nil {
 		return nil, err

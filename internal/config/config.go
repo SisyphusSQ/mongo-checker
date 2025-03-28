@@ -22,9 +22,8 @@ type Config struct {
 	IncludeColls string `toml:"include_colls"`
 	DBTrans      string `toml:"database_transform"`
 
-	CheckIndexes bool `toml:"check_indexes"`
-	ChunkSize    int  `toml:"chunk_size"`
-	Parallel     int  `toml:"parallel"`
+	LimitQPS int `toml:"limit_qps"`
+	Parallel int `toml:"parallel"`
 
 	Debug   bool   `toml:"debug"`
 	LogPath string `toml:"log_path"`
@@ -55,7 +54,7 @@ func (c *Config) PreCheck() {
 		panic("exclude_dbs and include_dbs are mutually exclusive")
 	}
 
-	if c.ExcludeColls == "" && c.IncludeColls == "" {
+	if c.ExcludeColls != "" && c.IncludeColls != "" {
 		panic("exclude_colls or include_colls are mutually exclusive")
 	}
 
@@ -65,18 +64,18 @@ func (c *Config) PreCheck() {
 		c.ExcludeDBs += ",admin,local,config"
 	}
 
-	if c.IncludeDBs == "" && c.IncludeColls == "" {
-		c.IncludeDBs = "system.profile"
-	} else if c.IncludeDBs != "" {
-		c.IncludeDBs += ",system.profile"
+	if c.IncludeDBs == "" && c.ExcludeColls == "" {
+		c.ExcludeColls = "system.profile"
+	} else if c.ExcludeColls != "" {
+		c.ExcludeColls += ",system.profile"
 	}
 
 	if c.LogPath == "" {
 		c.LogPath = "./logs"
 	}
 
-	if c.ChunkSize == 0 {
-		c.ChunkSize = 1000
+	if c.LimitQPS == 0 {
+		c.LimitQPS = 5000
 	}
 
 	if !slices.Contains(vars.ConnModes, c.ConnectMode) {
