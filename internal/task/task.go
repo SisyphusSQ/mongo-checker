@@ -17,9 +17,11 @@ import (
 	"mongo-checker/internal/model/do"
 	"mongo-checker/internal/model/dto"
 	"mongo-checker/internal/progress"
+	"mongo-checker/pkg/bar"
 	l "mongo-checker/pkg/log"
 	mg "mongo-checker/pkg/mongo"
 	"mongo-checker/utils"
+	"mongo-checker/vars"
 )
 
 type Task struct {
@@ -46,7 +48,8 @@ type Task struct {
 	limit  int
 	bucket *ratelimit.Bucket
 
-	dbConn *dao.SqliteDao
+	dbConn     *dao.SqliteDao
+	barManager bar.Manager
 
 	errChan  chan error
 	parallel chan struct{}
@@ -60,7 +63,8 @@ type SubTask struct {
 	checkChan chan *dto.CheckMsg
 	retryChan chan *do.ResultRecord
 
-	checkTask *progress.Checker
+	checkTask   *progress.Checker
+	barProgress *bar.CountProgressor
 }
 
 func New(cfg *config.Config) (*Task, error) {
@@ -81,14 +85,16 @@ func New(cfg *config.Config) (*Task, error) {
 			excludeColls: make([]string, 0),
 			checkNS:      make(map[dto.NS]dto.NS),
 			checkDBs:     make(map[string]string),
+			subTaskMp:    make(map[dto.NS]*SubTask),
 
 			errChan:  make(chan error),
 			parallel: make(chan struct{}, cfg.Parallel),
 			doneChan: make(chan struct{}),
 
-			subTaskMp: make(map[dto.NS]*SubTask),
+			barManager: bar.NewBarWriter(l.PrintLogger, vars.BarWaitTime, vars.BarLength, false),
 		}
 	)
+	task.barManager.Start()
 	task.ctx, task.cancel = context.WithCancel(context.Background())
 
 	task.transRules = make(map[string]string)
@@ -124,25 +130,28 @@ func New(cfg *config.Config) (*Task, error) {
 }
 
 func (t *Task) loop() {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	ticker := time.NewTicker(vars.BarWaitTime)
+	defer func() {
+		ticker.Stop()
+		t.barManager.Stop()
+	}()
 
 	for {
 		select {
 		case <-ticker.C:
 			t.Lock()
-			for ns, sb := range t.subTaskMp {
+			for _, sb := range t.subTaskMp {
 				if sb.checkTask == nil {
 					// Perhaps checkTask hasn't inited yet
 					continue
 				}
 
-				if !sb.checkTask.IsRunning() {
-					// delete not running task
-					delete(t.subTaskMp, ns)
+				if !sb.checkTask.IsFirstCheck() {
+					continue
 				}
 
 				m := sb.checkTask.Metric()
+				sb.barProgress.Set(m.Processed)
 				l.Logger.Infof("[MONITOR] ns[%s] checkPercent[%.2f%%] processed[%d] total[%d] wrong[%d] notFound[%d]",
 					m.Ns.Str(), float64(m.Processed)/float64(m.Total)*100, m.Processed, m.Total, m.WrongNum, m.NotFound)
 			}
@@ -158,6 +167,7 @@ func (t *Task) Start() error {
 
 	// [FIRST STEP] check whether ns is existed in destination
 	l.Logger.Info("[FIRST STEP] start to check whether source ns is existed in destination")
+	l.PrintLogger.Infof("[FIRST STEP] start to check whether source ns is existed in destination")
 	srcConn, err := mg.NewMongoConn(t.sourceUrl, t.connMode)
 	if err != nil {
 		l.Logger.Errorf("source[%s] can not connect to source database, %v",
@@ -177,7 +187,8 @@ func (t *Task) Start() error {
 	}
 
 	t.closeAll(destConn, srcConn)
-	l.Logger.Info("[FIRST STEP] NS in source and destination is equaled, go to [SECOND STEP]")
+	l.Logger.Info("[FIRST STEP] Ns in source and destination is equaled, go to [SECOND STEP]")
+	l.PrintLogger.Infof("[FIRST STEP] Ns in source and destination is equaled, go to [SECOND STEP]")
 
 	// [SECOND STEP] will check documents whether is equal by two sides
 	t.fullCheck()
@@ -195,6 +206,7 @@ func (t *Task) Start() error {
 		return err
 	}
 	if len(nss) == 0 {
+		l.PrintLogger.Infof("[FINISH] All namespaes are equaled, Congratulations!")
 		goto End
 	}
 
@@ -203,8 +215,9 @@ func (t *Task) Start() error {
 	case err = <-t.errChan:
 		return err
 	case <-t.doneChan:
-		l.Logger.Info("[THIRD STEP] all NS check tasks in source and destination are finished")
+		l.Logger.Info("[THIRD STEP] all Ns check tasks in source and destination are finished")
 	}
+	l.PrintLogger.Infof("[FINISH] See check result in logFile or sqlite, if has any wrong data...")
 
 End:
 	// if code reached here, all steps are completed
@@ -214,6 +227,7 @@ End:
 func (t *Task) fullCheck() {
 	// [SECOND STEP] will check documents whether is equal by two sides
 	l.Logger.Info("[SECOND STEP] will check documents whether is equal by two sides")
+	l.PrintLogger.Infof("[SECOND STEP] will check documents whether is equal by two sides")
 	go func() {
 		for destNs, srcNs := range t.checkNS {
 			t.parallel <- struct{}{}
@@ -237,9 +251,12 @@ func (t *Task) fullCheck() {
 					l.Logger.Errorf("[SECOND STEP] ns[%s] create check task err, %v", srcNs.Str(), err)
 					t.errChan <- err
 				}
+				ck.SetFirstCheck()
 				sb.checkTask = ck
+				sb.barProgress = bar.NewCounter(ck.Total())
+				t.barManager.Attach(srcNs.Str(), sb.barProgress)
 
-				err = ck.Start()
+				err = ck.Start(t.barManager)
 				if err != nil {
 					t.errChan <- err
 				}
@@ -252,7 +269,7 @@ func (t *Task) fullCheck() {
 		for {
 			select {
 			case <-ticker.C:
-				//l.Logger.Debugf("len(t.checkNS)=%d, t.secStepFin=%d)", len(t.checkNS), t.secStepFin.Load())
+				//l.Logger.Debugf("[SECOND STEP] len(t.checkNS)=%d, t.secStepFin=%d)", len(t.checkNS), t.secStepFin.Load())
 				if len(t.checkNS) == int(t.secStepFin.Load()) {
 					t.doneChan <- struct{}{}
 					return
@@ -266,6 +283,8 @@ func (t *Task) fullCheck() {
 
 func (t *Task) twiceCheck(nss []*do.Overview) {
 	l.Logger.Info("[THIRD STEP] have wrong records, check it twice")
+	l.PrintLogger.Infof("[THIRD STEP] have wrong records, check it twice")
+
 	go func() {
 		var err error
 		for _, n := range nss {
@@ -290,6 +309,7 @@ func (t *Task) twiceCheck(nss []*do.Overview) {
 					t.errChan <- err
 				}
 				t.thirdStepFin.Add(1)
+				l.Logger.Debugf("[THIRD STEP] ns[%s] twice check task is finished", src.Str())
 			}()
 		}
 
@@ -298,10 +318,11 @@ func (t *Task) twiceCheck(nss []*do.Overview) {
 		for {
 			select {
 			case <-ticker.C:
+				//l.Logger.Debugf("[THIRD STEP] len(t.checkNS)=%d, t.secStepFin=%d)", len(nss), t.thirdStepFin.Load())
 				if len(nss) == int(t.thirdStepFin.Load()) {
 					t.doneChan <- struct{}{}
+					return
 				}
-				return
 			case <-t.ctx.Done():
 				return
 			}
@@ -338,28 +359,36 @@ func (t *Task) twiceCompare(src, dest dto.NS) error {
 		return fmt.Errorf("ns[%s] has to mush wrong datas, stopping to check twice", src.Str())
 	}
 
+	wg := new(sync.WaitGroup)
 	for rows.Next() {
-		t.bucket.Take(1)
-
 		var r do.ResultRecord
-		err = rows.Scan(&r)
+		//err = rows.Scan(&r)
+		err = t.dbConn.Connect().ScanRows(rows, &r)
 		if err != nil {
 			return err
 		}
 
-		err = ck.CheckOne(r.MID)
-		if err != nil {
-			return err
-		}
+		utils.TakeWithBlock(t.bucket)
+		go func() {
+			wg.Add(1)
+			err = ck.CheckOne(r.MID)
+			if err != nil {
+				t.errChan <- err
+			}
+			wg.Done()
+		}()
 	}
 
 	// finished checking here
+	wg.Wait()
 	metric := ck.Metric()
 	updates := map[string]any{
 		"wrong":     metric.WrongNum,
 		"not_found": metric.NotFound,
 	}
 	err = t.dbConn.UpdateOverview(src, updates)
+	l.Logger.Infof("[FINISH] Ns[%s] check with wrong data[len:%d], not found data[len:%d]", src.Str(), metric.WrongNum, metric.NotFound)
+	l.PrintLogger.Infof("[FINISH] Ns[%s] check with wrong data[len:%d], not found data[len:%d]", src.Str(), metric.WrongNum, metric.NotFound)
 	return err
 }
 

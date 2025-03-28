@@ -2,6 +2,8 @@ package dao
 
 import (
 	"database/sql"
+	"sync"
+
 	"gorm.io/gorm"
 
 	"mongo-checker/internal/model/do"
@@ -11,6 +13,7 @@ import (
 )
 
 type SqliteDao struct {
+	sync.Mutex
 	db *gormv2.Engine
 }
 
@@ -49,16 +52,25 @@ func (d *SqliteDao) Close() {
 }
 
 func (d *SqliteDao) CreateOverview(ov do.Overview) error {
+	d.Lock()
+	defer d.Unlock()
+
 	return d.db.Connect().Table(do.Overview{}.TableName()).Create(&ov).Error
 }
 
 func (d *SqliteDao) UpdateOverview(ns dto.NS, updates map[string]any) error {
+	d.Lock()
+	defer d.Unlock()
+
 	return d.db.Connect().Table(do.Overview{}.TableName()).
 		Where("database = ? and collection = ?", ns.Database, ns.Collection).
 		Updates(updates).Error
 }
 
 func (d *SqliteDao) GetNeedCheckNS() (ov []*do.Overview, err error) {
+	d.Lock()
+	defer d.Unlock()
+
 	err = d.db.Connect().Table(do.Overview{}.TableName()).
 		Where("not_found > 0 or wrong > 0").
 		Find(&ov).Error
@@ -66,10 +78,16 @@ func (d *SqliteDao) GetNeedCheckNS() (ov []*do.Overview, err error) {
 }
 
 func (d *SqliteDao) CreateResultRecord(rr []*do.ResultRecord) error {
+	d.Lock()
+	defer d.Unlock()
+
 	return d.db.Connect().Table(do.ResultRecord{}.TableName()).Create(&rr).Error
 }
 
 func (d *SqliteDao) GetNSWrongRecord(db, col string) (rows *sql.Rows, cnt int64, err error) {
+	d.Lock()
+	defer d.Unlock()
+
 	rows, err = d.db.Connect().Table(do.ResultRecord{}.TableName()).
 		Where("database = ? and collection = ? and seq_num = ?", db, col, dto.First).
 		Count(&cnt).

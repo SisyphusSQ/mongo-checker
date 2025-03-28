@@ -1,6 +1,10 @@
 package utils
 
-import "strings"
+import (
+	"github.com/juju/ratelimit"
+	"strings"
+	"time"
+)
 
 // BlockPassword
 // block password in mongo_urls:
@@ -39,4 +43,15 @@ func BlockPassword(url, replace string) string {
 		}
 	}
 	return string(newUrl)
+}
+
+// TakeWithBlock will be blocked, when token can't be take in limit bucket
+func TakeWithBlock(bucket *ratelimit.Bucket) {
+	for {
+		if bucket.TakeAvailable(1) == 0 {
+			time.Sleep(1 * time.Millisecond)
+			continue
+		}
+		return
+	}
 }

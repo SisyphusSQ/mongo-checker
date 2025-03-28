@@ -3,9 +3,11 @@ package progress
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"mongo-checker/pkg/bar"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +22,7 @@ import (
 	"mongo-checker/internal/model/dto"
 	l "mongo-checker/pkg/log"
 	mg "mongo-checker/pkg/mongo"
+	"mongo-checker/utils"
 )
 
 type Checker struct {
@@ -33,8 +36,9 @@ type Checker struct {
 	url      string // destination
 	connMode string
 
-	isRunning bool
-	bucket    *ratelimit.Bucket
+	isRunning    bool
+	isFirstCheck bool
+	bucket       *ratelimit.Bucket
 
 	retryTime int
 	retryWait time.Duration
@@ -124,7 +128,7 @@ func NewChecker(ctx context.Context, nsMp map[dto.NS]dto.NS, src, dest, connMode
 	return c, nil
 }
 
-func (c *Checker) Start() error {
+func (c *Checker) Start(bm bar.Manager) error {
 	go func() {
 		c.wg.Add(1)
 		defer c.wg.Done()
@@ -169,16 +173,16 @@ func (c *Checker) Start() error {
 				l.Logger.Errorf("check ns[%s] create overview err: %v", c.ns.Str(), err)
 			}
 
-			return c.Stop()
+			return c.Stop(bm)
 		case err := <-c.errChan:
 			if err != nil {
 				l.Logger.Errorf("checker ns[%s] error: %v", c.ns.Str(), err)
-				c.Stop()
+				c.Stop(bm)
 				return err
 			}
 		case <-c.ctx.Done():
 			l.Logger.Infof("[checker] ns[%s] context done", c.ns.Str())
-			return c.Stop()
+			return c.Stop(bm)
 		}
 	}
 }
@@ -193,7 +197,7 @@ func (c *Checker) checkLoop() error {
 				return nil
 			}
 
-			c.bucket.Take(1)
+			utils.TakeWithBlock(c.bucket)
 			if msg.Done {
 				return c.waitForDone()
 			}
@@ -215,10 +219,28 @@ func (c *Checker) checkLoop() error {
 				}
 
 				// not consider res == Error, error is handled before
+				var (
+					srcData, destData bson.M
+					srcByts, destByts []byte
+				)
+
 				if res == dto.Wrong {
 					c.wrongNum.Add(1)
+
+					err = bson.Unmarshal(msg.Raw, &srcData)
+					if err == nil {
+						srcByts, _ = json.Marshal(srcData)
+					}
+					err = bson.Unmarshal(destRaw, &destData)
+					if err == nil {
+						destByts, _ = json.Marshal(destData)
+					}
 				} else if res == dto.NotFound {
 					c.notFound.Add(1)
+					err = bson.Unmarshal(msg.Raw, &srcData)
+					if err == nil {
+						srcByts, _ = json.Marshal(srcData)
+					}
 				}
 
 				// todo: 目前先只支持 _id为objectId类型的数据
@@ -234,8 +256,8 @@ func (c *Checker) checkLoop() error {
 					Coll:      c.ns.Collection,
 					SeqNum:    dto.First,
 					MID:       mid,
-					SrcBson:   string(msg.Raw),
-					DestBson:  string(destRaw),
+					SrcBson:   string(srcByts),
+					DestBson:  string(destByts),
 					WrongType: string(res),
 				}
 			}()
@@ -271,13 +293,18 @@ func (c *Checker) CheckOne(id string) error {
 		return err
 	}
 
-	time.Sleep(40 * time.Millisecond)
+	time.Sleep(5 * time.Second)
 	select {
 	case record := <-c.retryChan:
 		record.SeqNum = dto.Second
 		err = c.writeRecords([]*do.ResultRecord{record})
 		if err != nil {
 			return err
+		}
+
+		byts, err := json.MarshalIndent(record, "", "  ")
+		if err == nil {
+			l.Logger.Infof("[RESULT] Ns[%s] has wrong data:\n%s", c.ns.Str(), string(byts))
 		}
 	case err = <-c.errChan:
 		return err
@@ -350,7 +377,28 @@ func (c *Checker) IsRunning() bool {
 	return c.isRunning
 }
 
-func (c *Checker) Stop() error {
+func (c *Checker) SetFirstCheck() {
+	c.isFirstCheck = true
+}
+
+func (c *Checker) IsFirstCheck() bool {
+	return c.isFirstCheck
+}
+
+func (c *Checker) Total() int64 {
+	return c.total
+}
+
+func (c *Checker) Stop(barManager bar.Manager) error {
+	if c.isFirstCheck {
+		c.isFirstCheck = false
+	}
+
+	if barManager != nil {
+		l.PrintLogger.Infof("[SECOND STEP] task ns[%s] first check has finished, delete from bar", c.ns.Str())
+		barManager.Detach(c.ns.Str())
+	}
+
 	c.pCancel()
 	c.extractor.Stop()
 	for n := range c.clientNum {

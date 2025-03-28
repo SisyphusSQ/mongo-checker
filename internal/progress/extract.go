@@ -134,7 +134,7 @@ func (e *Extractor) FindOne(id string) error {
 	}
 
 	raw, err := e.conn.Client.Database(e.ns.Database).Collection(e.ns.Collection).
-		FindOne(e.ctx, bson.M{"_id": id}).DecodeBytes()
+		FindOne(e.ctx, bson.M{"_id": pid}).DecodeBytes()
 	if err != nil {
 		l.Logger.Errorf("Failed to get data from ns[%s]: %v", e.ns.Str(), err)
 		return err

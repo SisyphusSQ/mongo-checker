@@ -113,7 +113,8 @@ var runCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		l.Logger.Info("All checks have been finished, Bye...")
+		l.Logger.Info("All check tasks have been finished, Bye...")
+		l.PrintLogger.Infof("All check tasks have been finished, Bye...")
 
 		// do memory profiling before exit
 		MemProfile()

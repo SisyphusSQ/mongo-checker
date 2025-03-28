@@ -1,9 +1,11 @@
 package log
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
@@ -13,7 +15,10 @@ import (
 	"mongo-checker/utils/timeutil"
 )
 
-var Logger *ZapLogger
+var (
+	Logger      *ZapLogger
+	PrintLogger *Writer
+)
 
 func New(c *config.Config) {
 	loglevel := zapcore.InfoLevel
@@ -29,6 +34,12 @@ func New(c *config.Config) {
 	if _, err = os.Stat(logDir); err != nil && os.IsNotExist(err) {
 		if err = os.MkdirAll(logDir, os.ModeDir|os.ModePerm); err != nil {
 			panic(fmt.Errorf("create log.dir[%v] failed[%v]", logDir, err))
+		}
+	}
+
+	for _, fn := range []string{c.LogPath + "/checker.log", c.LogPath + "/result.db"} {
+		if err = initRotate(fn); err != nil {
+			panic(err)
 		}
 	}
 
@@ -59,6 +70,64 @@ func New(c *config.Config) {
 	core := zapcore.NewCore(encoder, writeSyncer, loglevel)
 	logger := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1)).Sugar()
 	Logger = NewZapLogger(logger)
+
+	// -------- new print logger --------
+	priCfg := zap.Config{
+		Level:       zap.NewAtomicLevelAt(zap.DebugLevel),
+		Development: true,
+		Encoding:    "console", // 使用 console 编码器输出文本日志
+		EncoderConfig: zapcore.EncoderConfig{
+			TimeKey:        "ts",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "caller",
+			MessageKey:     "msg",
+			StacktraceKey:  "stacktrace",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    customLevelEncoder,
+			EncodeTime:     zapcore.TimeEncoderOfLayout(timeutil.CSTLayout),
+			EncodeDuration: zapcore.SecondsDurationEncoder,
+			EncodeCaller:   noCallerEncoder,
+		},
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+
+	pri, err := priCfg.Build()
+	if err != nil {
+		panic(err)
+	}
+	PrintLogger = &Writer{logger: pri.Sugar()}
+}
+
+func initRotate(fn string) error {
+	f, err := os.Lstat(fn)
+	if f != nil {
+		var (
+			fname string
+			num   = 100
+		)
+
+		for ; num >= 1; num-- {
+			fname = fn + fmt.Sprintf(".%d", num)
+			nfname := fn + fmt.Sprintf(".%d", num+1)
+			_, err = os.Lstat(fname)
+			if err == nil {
+				_ = os.Rename(fname, nfname)
+			}
+		}
+
+		// Rename the file to its newfound home
+		err = os.Rename(fn, fname)
+		if err != nil {
+			return fmt.Errorf("Rotate: %s\n", err)
+		}
+	}
+
+	if err != nil && strings.Contains(err.Error(), "no such file or directory") {
+		return nil
+	}
+	return err
 }
 
 func customLevelEncoder(level zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
@@ -72,6 +141,10 @@ func customCallerEncoder(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayE
 	} else {
 		enc.AppendString("[undefined]")
 	}
+}
+
+func noCallerEncoder(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString("")
 }
 
 type ZapLogger struct {
@@ -156,4 +229,24 @@ func (l *ZapLogger) Error(format string, args ...interface{}) {
 
 func (l *ZapLogger) Sync() {
 	_ = l.logger.Sync()
+}
+
+type Writer struct {
+	logger *zap.SugaredLogger
+}
+
+func (w *Writer) Write(p []byte) (n int, err error) {
+	// 按行分割输入的字节切片
+	lines := bytes.Split(p, []byte("\n"))
+	for _, line := range lines {
+		if len(line) > 0 {
+			// 记录日志
+			w.logger.Info(string(line))
+		}
+	}
+	return len(p), nil
+}
+
+func (w *Writer) Infof(format string, args ...interface{}) {
+	w.logger.Infof(format, args...)
 }
