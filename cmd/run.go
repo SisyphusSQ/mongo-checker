@@ -123,12 +123,12 @@ var runCmd = &cobra.Command{
 }
 
 func initRun() {
-	runCmd.Flags().StringVarP(&configPath, "config", "c", "/Users/suqing/Coding/golang/self/mongo-checker/conf/test.toml", "config file path")
+	runCmd.Flags().StringVarP(&configPath, "config", "c", "./test.toml", "config file path")
 	runCmd.Flags().StringVar(&logPath, "log-path", "./logs", "log and sqlite db file path")
 	runCmd.Flags().StringVar(&cpuprofile, "cpuprofile", "", "write cpu profile to `file`")
 	runCmd.Flags().StringVar(&memprofile, "memprofile", "", "write memory profile to `file`")
 
-	runCmd.Flags().IntVar(&limitQPS, "limit-qps", 5000, "Number of rows to act on in chunks.\nZero(0) means all rows updated in one operation.\nOne(1) means update/delete one row everytime.\nThe lower the number, the shorter any locks are held, but the more operations required and the more total running time.")
+	runCmd.Flags().IntVar(&limitQPS, "limit-qps", 5000, "Number of rows to checker in one second time")
 	runCmd.Flags().IntVar(&parallel, "parallel", 8, "Number of collections will be checked in parallel")
 
 	runCmd.Flags().BoolVar(&debug, "debug", false, "If debug_mode is true, print debug logs")
